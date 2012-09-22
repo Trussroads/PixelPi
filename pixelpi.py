@@ -6,6 +6,8 @@ import time
 import argparse
 import csv
 import socket
+import struct
+import io
 
 #3 bytes per pixel
 PIXEL_SIZE = 3
@@ -210,6 +212,94 @@ def pixelinvaders():
 		write_stream(pixels)
 		spidev.flush()
 
+def ambipi():
+    print ("Start Ambi listener "+args.TCP_IP+":"+str(args.TCP_PORT))
+    serversocket = socket.socket( socket.AF_INET, # Internet
+                      socket.SOCK_STREAM ) # TCP
+    serversocket.bind( (args.TCP_IP, args.TCP_PORT) )
+    serversocket.listen(1)
+    (clientsocket, address) = serversocket.accept()
+    
+    HELLO_SIZE = 7
+    hello = clientsocket.recv( HELLO_SIZE )
+    print ("Received hello: '%s'" % hello)
+    if hello != "ambipi\n":
+        print ("Bad hello message")
+        exit()
+    
+    BUFFER_LENGTH_SIZE = 4
+    XY_COORD_SIZE = 2
+    YUV_SIZE = 3
+    POINT_SIZE = XY_COORD_SIZE + YUV_SIZE
+    
+    longStruct = struct.Struct('>I')
+    byteStruct = struct.Struct('>BBBBB')
+    while True:
+        
+        buffer_size_data = clientsocket.recv( BUFFER_LENGTH_SIZE )
+        if len(buffer_size_data) != BUFFER_LENGTH_SIZE:
+            print "Read error (A)"
+            exit()
+        
+        buffer_size = longStruct.unpack_from(buffer(buffer_size_data))[0]
+        
+        pixels_in_buffer = (buffer_size - BUFFER_LENGTH_SIZE) / POINT_SIZE
+        #print "Buffer Size: 0x%04x, Pixels in buffer: %d" % (buffer_size, pixels_in_buffer)
+        
+        if pixels_in_buffer != 50:
+            print "Data error (A)"
+            continue
+        
+        
+        read_buffer = io.BytesIO()
+        bytes_to_read = buffer_size - BUFFER_LENGTH_SIZE
+        
+        while bytes_to_read > 0:
+            read_data = clientsocket.recv( bytes_to_read )
+            bytes_read = len(read_data)
+            if bytes_read == 0:
+                print "Read error (B)"
+                exit()
+            read_buffer.write(read_data)
+            #import code; code.interact(local=locals())
+            bytes_to_read -= bytes_read
+            #print "Bytes remaining: %d" % (bytes_to_read)
+        
+        read_buffer.seek(0)
+        data = read_buffer.read()
+        pixels = bytearray(pixels_in_buffer * PIXEL_SIZE)
+        
+        # for now, we assume the data is in the correct order for driving all the LEDs in a single chain
+        # we will ignore the X/Y values
+        
+        for pixel_index in range(pixels_in_buffer):
+            start_of_point = (pixel_index * POINT_SIZE)
+
+            point_data = data[start_of_point:start_of_point + POINT_SIZE]
+            (X,Y,y,u,v) = byteStruct.unpack_from(buffer(bytearray(point_data)))
+            
+            #import code; code.interact(local=locals())
+            #print "YUV: #%02x%02x%02x, X,Y: %d,%d" % (y,u,v, X, Y)
+            
+            r = y + 1.4075 * (v - 128)
+            g = y - 0.3455 * (u - 128) - (0.7169 * (v - 128))
+            b = y + 1.7790 * (u - 128)
+
+            (R,G,B) = [clamp(r), clamp(g), clamp(b)]
+            
+            #print "RGB: #%02x %02x %02x" % (R,G,B)
+            pixel_to_adjust = bytearray([R,G,B])
+            
+            pixel_to_filter = correct_pixel_brightness(pixel_to_adjust)
+            
+            pixels[((pixel_index)*PIXEL_SIZE):] = filter_pixel(pixel_to_filter[:], 1)
+                
+        write_stream(pixels)
+        spidev.flush()
+
+def clamp(num):
+    return int(max(0,min(255,num)))
+    
 def strip():
     img = Image.open(args.filename).convert("RGB")
     input_image = img.load()
@@ -437,6 +527,10 @@ parser_pixelinvaders = subparsers.add_parser('pixelinvaders', parents=[common_pa
 parser_pixelinvaders.set_defaults(func=pixelinvaders)
 parser_pixelinvaders.add_argument('--udp-ip', action='store', dest='UDP_IP', required=True, help='Used for PixelInvaders mode, listening address')
 parser_pixelinvaders.add_argument('--udp-port', action='store', dest='UDP_PORT', required=True, default=6803, type=int, help='Used for PixelInvaders mode, listening port')
+parser_ambipi = subparsers.add_parser('ambipi', parents=[common_parser], help='AmbiPi Mode - setup pixelpi as a AmbiPi slave')
+parser_ambipi.set_defaults(func=ambipi)
+parser_ambipi.add_argument('--tcp-ip', action='store', dest='TCP_IP', required=True, help='Used for AmbiPi mode, listening address')
+parser_ambipi.add_argument('--tcp-port', action='store', dest='TCP_PORT', required=True, default=20434, type=int, help='Used for AmbiPi mode, listening port')
 parser_fade = subparsers.add_parser('fade', parents=[common_parser], help='Fade Mode - Fade colors on all LEDs')
 parser_fade.set_defaults(func=fade)
 parser_fade.add_argument('--num_leds', action='store', dest='num_leds', required=True, default=50, type=int,  help='Set the  number of LEDs in the string')
