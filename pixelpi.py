@@ -219,6 +219,7 @@ def ambipi():
     serversocket.bind( (args.TCP_IP, args.TCP_PORT) )
     
     while True:
+        all_off()
         print ("Waiting for connection")
         serversocket.listen(1)
         (clientsocket, address) = serversocket.accept()
@@ -252,10 +253,9 @@ def ambipi():
             pixels_in_buffer = (buffer_size - BUFFER_LENGTH_SIZE) / POINT_SIZE
             #print "Buffer Size: 0x%04x, Pixels in buffer: %d" % (buffer_size, pixels_in_buffer)
             
-            if pixels_in_buffer != 104:
-                print "Data error (A)"
+            if pixels_in_buffer != args.num_leds:
+                print "Data error (led count mismatch, expected: %d, received: %d)" % (args.num_leds, pixels_in_buffer)
                 continue
-            
             
             read_buffer = io.BytesIO()
             bytes_to_read = buffer_size - BUFFER_LENGTH_SIZE
@@ -531,6 +531,7 @@ parser_ambipi = subparsers.add_parser('ambipi', parents=[common_parser], help='A
 parser_ambipi.set_defaults(func=ambipi)
 parser_ambipi.add_argument('--tcp-ip', action='store', dest='TCP_IP', required=True, help='Used for AmbiPi mode, listening address')
 parser_ambipi.add_argument('--tcp-port', action='store', dest='TCP_PORT', required=True, default=20434, type=int, help='Used for AmbiPi mode, listening port')
+parser_ambipi.add_argument('--num_leds', action='store', dest='num_leds', required=True, default=104, type=int,  help='Set the  number of LEDs in the string')
 parser_fade = subparsers.add_parser('fade', parents=[common_parser], help='Fade Mode - Fade colors on all LEDs')
 parser_fade.set_defaults(func=fade)
 parser_fade.add_argument('--num_leds', action='store', dest='num_leds', required=True, default=50, type=int,  help='Set the  number of LEDs in the string')
