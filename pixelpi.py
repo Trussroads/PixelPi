@@ -213,26 +213,16 @@ def pixelinvaders():
 		spidev.flush()
 
 def ambipi():
-    print ("Start Ambi listener "+args.TCP_IP+":"+str(args.TCP_PORT))
+    print ("Start Ambi listener "+args.UDP_IP+":"+str(args.UDP_PORT))
     serversocket = socket.socket( socket.AF_INET, # Internet
-                      socket.SOCK_STREAM ) # TCP
-    serversocket.bind( (args.TCP_IP, args.TCP_PORT) )
+                      socket.SOCK_DGRAM ) # UDP
+    serversocket.bind( (args.UDP_IP, args.UDP_PORT) )
     
+    UDP_BUFFER_SIZE = 1024
     while True:
         all_off()
-        print ("Waiting for connection")
-        serversocket.listen(1)
-        (clientsocket, address) = serversocket.accept()
         
-        connected = True
-        
-        HELLO_SIZE = 7
-        hello = clientsocket.recv( HELLO_SIZE )
-        print ("Received hello: '%s'" % hello)
-        if hello != "ambipi\n":
-            print ("Bad hello message")
-            exit()
-        
+        reset_required = False
         BUFFER_LENGTH_SIZE = 4
         XY_COORD_SIZE = 2
         RGB_SIZE = 3
@@ -240,43 +230,36 @@ def ambipi():
         
         longStruct = struct.Struct('>I')
         byteStruct = struct.Struct('>BBBBB')
-        while connected:
+        while not reset_required:
             
-            buffer_size_data = clientsocket.recv( BUFFER_LENGTH_SIZE )
-            if len(buffer_size_data) != BUFFER_LENGTH_SIZE:
+            data, addr = serversocket.recvfrom( UDP_BUFFER_SIZE )
+            
+            if len(data) < 4:
                 print "Read error (A)"
-                connected = False
+                reset_required = True
                 continue
             
-            buffer_size = longStruct.unpack_from(buffer(buffer_size_data))[0]
+            read_buffer = io.BytesIO()
+            read_buffer.write(data)
+            
+            read_buffer.seek(0)
+            
+            buffer_size = longStruct.unpack_from(buffer(read_buffer.read(BUFFER_LENGTH_SIZE)))[0]
             
             pixels_in_buffer = (buffer_size - BUFFER_LENGTH_SIZE) / POINT_SIZE
             #print "Buffer Size: 0x%04x, Pixels in buffer: %d" % (buffer_size, pixels_in_buffer)
             
             if pixels_in_buffer != args.num_leds:
                 print "Data error (led count mismatch, expected: %d, received: %d)" % (args.num_leds, pixels_in_buffer)
+                reset_required = True
                 continue
-            
-            read_buffer = io.BytesIO()
-            bytes_to_read = buffer_size - BUFFER_LENGTH_SIZE
-            
-            while bytes_to_read > 0 and connected:
-                read_data = clientsocket.recv( bytes_to_read )
-                bytes_read = len(read_data)
-                if bytes_read == 0:
-                    print "Read error (B)"
-                    connected = False
-                    continue
-                read_buffer.write(read_data)
-                #import code; code.interact(local=locals())
-                bytes_to_read -= bytes_read
-                #print "Bytes remaining: %d" % (bytes_to_read)
-            
-            if not connected:
-                continue
-            
-            read_buffer.seek(0)
+                        
             data = read_buffer.read()
+            if len(data) != (buffer_size - BUFFER_LENGTH_SIZE):
+                print "Data error (pixel data missing/incorrect)"
+                reset_required = True
+                continue
+            
             pixels = bytearray(pixels_in_buffer * PIXEL_SIZE)
             
             # for now, we assume the data is in the correct order for driving all the LEDs in a single chain
@@ -288,7 +271,7 @@ def ambipi():
                 point_data = data[start_of_point:start_of_point + POINT_SIZE]
                 (X,Y,R,G,B) = byteStruct.unpack_from(buffer(bytearray(point_data)))
                 
-                #print "RGB: #%02x %02x %02x" % (R,G,B)
+                #print "X,Y: %02x,%02x RGB: #%02x %02x %02x" % (X,Y,R,G,B)
                 pixel_to_adjust = bytearray([R,G,B])
                 
                 pixel_to_filter = correct_pixel_brightness(pixel_to_adjust)
@@ -298,7 +281,7 @@ def ambipi():
             write_stream(pixels)
             spidev.flush()
         
-        print "Disconnected"
+        print "Resetting..."
 
 def strip():
     img = Image.open(args.filename).convert("RGB")
@@ -529,8 +512,8 @@ parser_pixelinvaders.add_argument('--udp-ip', action='store', dest='UDP_IP', req
 parser_pixelinvaders.add_argument('--udp-port', action='store', dest='UDP_PORT', required=True, default=6803, type=int, help='Used for PixelInvaders mode, listening port')
 parser_ambipi = subparsers.add_parser('ambipi', parents=[common_parser], help='AmbiPi Mode - setup pixelpi as a AmbiPi slave')
 parser_ambipi.set_defaults(func=ambipi)
-parser_ambipi.add_argument('--tcp-ip', action='store', dest='TCP_IP', required=True, help='Used for AmbiPi mode, listening address')
-parser_ambipi.add_argument('--tcp-port', action='store', dest='TCP_PORT', required=True, default=20434, type=int, help='Used for AmbiPi mode, listening port')
+parser_ambipi.add_argument('--udp-ip', action='store', dest='UDP_IP', required=True, help='Used for AmbiPi mode, listening address')
+parser_ambipi.add_argument('--udp-port', action='store', dest='UDP_PORT', required=True, default=20434, type=int, help='Used for AmbiPi mode, listening port')
 parser_ambipi.add_argument('--num_leds', action='store', dest='num_leds', required=True, default=104, type=int,  help='Set the  number of LEDs in the string')
 parser_fade = subparsers.add_parser('fade', parents=[common_parser], help='Fade Mode - Fade colors on all LEDs')
 parser_fade.set_defaults(func=fade)
